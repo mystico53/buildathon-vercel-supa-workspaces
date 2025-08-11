@@ -5,7 +5,7 @@ export async function setupWorkspaceSchema() {
 
   try {
     // Test if tables exist by trying to select from them
-    const { data, error } = await supabase
+    const { error } = await supabase
       .from('workspace_presence')
       .select('id')
       .limit(1);

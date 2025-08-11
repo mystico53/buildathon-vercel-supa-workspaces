@@ -2,6 +2,7 @@
 
 import { createClient } from '@/lib/supabase/client';
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 
 export default function TestPage() {
   const [connected, setConnected] = useState<boolean | null>(null);
@@ -11,11 +12,11 @@ export default function TestPage() {
     async function testConnection() {
       try {
         const supabase = createClient();
-        const { data, error } = await supabase.from('_realtime_schema').select('count').limit(1);
+        const { error } = await supabase.from('_realtime_schema').select('count').limit(1);
         
         if (error) {
           // Try a simpler test - just check auth
-          const { data: authData, error: authError } = await supabase.auth.getSession();
+          const { error: authError } = await supabase.auth.getSession();
           if (authError) {
             throw authError;
           }
@@ -74,12 +75,12 @@ export default function TestPage() {
         </div>
         
         <div className="text-center">
-          <a 
+          <Link 
             href="/" 
             className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-4 py-2"
           >
             Back to Home
-          </a>
+          </Link>
         </div>
       </div>
     </div>
