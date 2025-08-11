@@ -4,27 +4,39 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Development Commands
 
-- `npm run dev` - Start development server with Turbopack (runs on http://localhost:3000)
+- `npm run dev` - Start development server with Turbopack (runs on http://localhost:3001 or 3000)
 - `npm run build` - Build production application (required before deployment)
 - `npm run start` - Start production server
 - `npm run lint` - Run ESLint checks (must pass for deployment)
 
 ## Project Architecture
 
-This is a Next.js 15 App Router application implementing URL-based collaborative workspaces using Supabase real-time features.
+This is a Next.js 15 App Router application implementing URL-based collaborative workspaces with **no authentication system**. Built as a "Finance Workspace App" using Supabase real-time features.
 
 ### Core Architecture Patterns
 
-**URL = Identity**: Workspaces are identified by URL paths (`/workspace/[workspaceId]`). No authentication required - anyone with the URL can access the workspace.
+**Authentication-Free Design**: No login, signup, or user accounts. The entire authentication system has been removed to provide instant access to workspace functionality.
+
+**URL = Identity**: Workspaces are identified by URL paths (`/workspace/[workspaceId]`). Anyone with the URL can access the workspace immediately.
 
 **Real-time Collaboration**: Uses Supabase real-time subscriptions for presence tracking and collaborative features. Each browser session gets a UUID for temporary identification.
 
-**Three-Layer Supabase Integration**:
+**Simplified Navigation**: The new `components/navbar.tsx` provides consistent navigation across all pages with prominent workspace creation access.
+
+**Two-Layer Supabase Integration** (auth layer removed):
 - `lib/supabase/client.ts` - Browser client for client components
 - `lib/supabase/server.ts` - Server client for server components/API routes
-- `lib/supabase/middleware.ts` - Session management in middleware
+- `lib/supabase/middleware.ts` - Minimal middleware (auth functionality removed)
 
 ### Key Components & Flow
+
+**Home Page**: `app/page.tsx` uses the shared `Navbar` component and prominently features workspace creation through `CreateWorkspaceButton`.
+
+**Shared Navigation**: `components/navbar.tsx` provides consistent navigation with:
+- "Finance Workspace App" branding
+- Deploy button integration  
+- Theme switcher
+- No authentication elements
 
 **Workspace Entry Point**: `app/workspace/[workspaceId]/page.tsx` is the main workspace interface. It:
 1. Validates database schema via `setupWorkspaceSchema()`
@@ -67,10 +79,11 @@ Required environment variables (in `.env.local`):
 ### Development Workflow
 
 1. **Database Setup**: Run `supabase-setup.sql` in Supabase dashboard SQL editor
-2. **Environment**: Copy `.env.example` to `.env.local` and add Supabase credentials
+2. **Environment**: Create `.env.local` and add Supabase credentials (no auth-specific vars needed)
 3. **Development**: Use `npm run dev` with Turbopack for fast iteration
 4. **Testing Multi-user**: Open workspace URLs in multiple browser tabs/windows
-5. **Deployment**: Ensure `npm run build` and `npm run lint` pass before deployment
+5. **Testing Workspace Creation**: Use the navbar "Create New Workspace" button from any page
+6. **Deployment**: Ensure `npm run build` and `npm run lint` pass before deployment
 
 ### Real-time Subscription Pattern
 
@@ -107,4 +120,15 @@ Uses shadcn/ui components with Tailwind CSS. Key patterns:
 - **Graceful Degradation**: Shows helpful setup instructions when database isn't configured
 - **Real-time Fallbacks**: Continues working if real-time subscription fails
 
-When working with this codebase, always test multi-user scenarios and ensure real-time features work across multiple browser sessions.
+### Important Architecture Changes
+
+**Authentication Removal**: The entire authentication system has been removed including:
+- All `/app/auth/` routes (login, sign-up, password reset)
+- `/app/protected/` directory and protected routes
+- Auth-related components (AuthButton, LoginForm, etc.)
+- Authentication middleware functionality
+- Environment variable checks for auth
+
+**Simplified Navigation**: New unified navbar component provides workspace creation access from any page without authentication barriers.
+
+When working with this codebase, always test multi-user scenarios and ensure real-time features work across multiple browser sessions. The app should work immediately without any signup or login requirements.
