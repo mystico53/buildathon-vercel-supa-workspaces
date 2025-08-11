@@ -1,21 +1,72 @@
 'use client';
 
 import { useParams, useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { setupWorkspaceSchema } from '@/lib/supabase/setup';
+
+// Generate consistent color for user based on session ID
+const getUserColor = (userSession: string) => {
+  // Simple hash function to convert string to number
+  let hash = 0;
+  for (let i = 0; i < userSession.length; i++) {
+    const char = userSession.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32bit integer
+  }
+  
+  // Convert hash to hue (0-360 degrees)
+  const hue = Math.abs(hash) % 360;
+  
+  // Return HSL color with good saturation and lightness for visibility
+  return `hsl(${hue}, 70%, 50%)`;
+};
 
 export default function WorkspacePage() {
   const params = useParams();
   const router = useRouter();
   const workspaceId = params.workspaceId as string;
-  const [userSession] = useState(() => crypto.randomUUID());
-  const [userName, setUserName] = useState(() => `User-${crypto.randomUUID().slice(0, 4)}`);
+  // Unique session per tab/window (using sessionStorage instead of localStorage)
+  const [userSession] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const stored = sessionStorage.getItem(`workspace-session-${workspaceId}`);
+      if (stored) return stored;
+      const newSession = crypto.randomUUID();
+      sessionStorage.setItem(`workspace-session-${workspaceId}`, newSession);
+      return newSession;
+    }
+    return crypto.randomUUID();
+  });
+  
+  // Unique user name per tab (tied to session)
+  const [userName, setUserName] = useState(() => {
+    if (typeof window !== 'undefined') {
+      // Check sessionStorage first (tab-specific)
+      const sessionStored = sessionStorage.getItem(`workspace-name-${workspaceId}`);
+      if (sessionStored) return sessionStored;
+      
+      // Generate new name for this tab
+      const defaultName = `User-${crypto.randomUUID().slice(0, 4)}`;
+      sessionStorage.setItem(`workspace-name-${workspaceId}`, defaultName);
+      return defaultName;
+    }
+    return `User-${crypto.randomUUID().slice(0, 4)}`;
+  });
+  
   const [isEditingName, setIsEditingName] = useState(false);
   const [onlineUsers, setOnlineUsers] = useState<any[]>([]);
   const [workspaceData, setWorkspaceData] = useState<any>(null);
   const [schemaReady, setSchemaReady] = useState(false);
   const [dbError, setDbError] = useState<string | null>(null);
+  const [lastFetch, setLastFetch] = useState(0);
+  
+  // Use ref to track current userName to avoid stale closures
+  const userNameRef = useRef(userName);
+  
+  // Update ref whenever userName changes
+  useEffect(() => {
+    userNameRef.current = userName;
+  }, [userName]);
 
   useEffect(() => {
     // Check if database schema is set up
@@ -39,8 +90,10 @@ export default function WorkspacePage() {
         .upsert({
           workspace_id: workspaceId,
           user_session: userSession,
-          user_name: userName,
+          user_name: userNameRef.current, // Use ref to get current value
           last_seen: new Date().toISOString(),
+        }, {
+          onConflict: 'workspace_id,user_session'
         });
 
       if (error) {
@@ -57,8 +110,50 @@ export default function WorkspacePage() {
     // Initial presence update
     updatePresence();
 
+    // Fetch current online users with debouncing
+    const fetchOnlineUsers = async () => {
+      const now = Date.now();
+      // Debounce: only fetch if last fetch was more than 2 seconds ago
+      if (now - lastFetch < 2000) {
+        return;
+      }
+      setLastFetch(now);
+      
+      const { data, error } = await supabase
+        .from('workspace_presence')
+        .select('user_session, user_name')
+        .eq('workspace_id', workspaceId)
+        .gte('last_seen', new Date(Date.now() - 30000).toISOString())
+        .order('created_at', { ascending: true });
+
+      if (error) {
+        console.log('Error fetching users:', error);
+      } else if (data) {
+        console.log('Online users found:', data.length);
+        setOnlineUsers(data);
+      }
+    };
+
+    // Clean up stale presence records (manual cleanup as fallback)
+    const cleanupStalePresence = async () => {
+      const { error } = await supabase
+        .from('workspace_presence')
+        .delete()
+        .eq('workspace_id', workspaceId)
+        .lt('last_seen', new Date(Date.now() - 120000).toISOString()); // 2 minutes old
+
+      if (error) {
+        console.log('Error cleaning up stale presence:', error);
+      } else {
+        console.log('✅ Stale presence records cleaned up');
+      }
+    };
+
     // Update presence every 10 seconds
     const presenceInterval = setInterval(updatePresence, 10000);
+
+    // Clean up stale presence every 60 seconds
+    const cleanupInterval = setInterval(cleanupStalePresence, 60000);
 
     // Subscribe to presence changes
     const presenceSubscription = supabase
@@ -73,36 +168,121 @@ export default function WorkspacePage() {
         },
         (payload) => {
           console.log('Presence change:', payload);
-          fetchOnlineUsers();
+          // Use setTimeout to debounce rapid changes
+          setTimeout(fetchOnlineUsers, 1000);
         }
       )
       .subscribe((status) => {
         console.log('Subscription status:', status);
       });
 
-    // Fetch current online users
-    const fetchOnlineUsers = async () => {
-      const { data, error } = await supabase
-        .from('workspace_presence')
-        .select('user_session, user_name')
-        .eq('workspace_id', workspaceId)
-        .gte('last_seen', new Date(Date.now() - 30000).toISOString());
+    fetchOnlineUsers();
 
-      if (error) {
-        console.log('Error fetching users:', error);
-      } else if (data) {
-        console.log('Online users found:', data.length);
-        setOnlineUsers(data);
+    // Handle page unload (browser close, tab close, navigation away)
+    const handleBeforeUnload = () => {
+      try {
+        // Synchronous cleanup attempt - more reliable than async
+        const supabaseClient = createClient();
+        supabaseClient
+          .from('workspace_presence')
+          .delete()
+          .eq('workspace_id', workspaceId)
+          .eq('user_session', userSession);
+        console.log('Cleanup initiated on unload');
+      } catch (error) {
+        console.log('Cleanup on unload failed:', error);
       }
     };
 
-    fetchOnlineUsers();
+    // Handle visibility change (tab switching, minimizing)
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        // Tab became hidden - reduce update frequency but don't stop completely
+        clearInterval(presenceInterval);
+        // Update once more before going hidden
+        updatePresence();
+      } else {
+        // Tab became visible - resume normal updates
+        updatePresence();
+        const newInterval = setInterval(updatePresence, 10000);
+        // Store the new interval reference
+        (window as any).presenceInterval = newInterval;
+      }
+    };
+
+    // Additional cleanup using Page Visibility API (more reliable than beforeunload)
+    const handlePageHide = () => {
+      // Page is being hidden/closed - immediate cleanup
+      try {
+        const supabaseClient = createClient();
+        supabaseClient
+          .from('workspace_presence')
+          .delete()
+          .eq('workspace_id', workspaceId)
+          .eq('user_session', userSession);
+        console.log('Cleanup on page hide');
+      } catch (error) {
+        console.log('Page hide cleanup failed:', error);
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    window.addEventListener('pagehide', handlePageHide); // More reliable than beforeunload
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
       clearInterval(presenceInterval);
+      clearInterval(cleanupInterval);
       presenceSubscription.unsubscribe();
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      window.removeEventListener('pagehide', handlePageHide);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      
+      // Final cleanup attempt
+      handleBeforeUnload();
     };
-  }, [workspaceId, userSession, userName, schemaReady]);
+  }, [workspaceId, userSession, schemaReady]);
+
+  const updateUserName = async () => {
+    // Save to sessionStorage (tab-specific)
+    if (typeof window !== 'undefined') {
+      sessionStorage.setItem(`workspace-name-${workspaceId}`, userName);
+    }
+    
+    const supabase = createClient();
+    const { error } = await supabase
+      .from('workspace_presence')
+      .upsert({
+        workspace_id: workspaceId,
+        user_session: userSession,
+        user_name: userName,
+        last_seen: new Date().toISOString(),
+      }, {
+        onConflict: 'workspace_id,user_session'
+      });
+
+    if (error) {
+      console.log('Error updating name:', error);
+    } else {
+      console.log('✅ Name updated:', userName);
+      // Trigger a refresh of online users to show the name change immediately
+      const fetchOnlineUsers = async () => {
+        const { data, error } = await supabase
+          .from('workspace_presence')
+          .select('user_session, user_name')
+          .eq('workspace_id', workspaceId)
+          .gte('last_seen', new Date(Date.now() - 30000).toISOString())
+          .order('created_at', { ascending: true });
+
+        if (error) {
+          console.log('Error fetching users:', error);
+        } else if (data) {
+          setOnlineUsers(data);
+        }
+      };
+      fetchOnlineUsers();
+    }
+  };
 
   const copyWorkspaceUrl = () => {
     navigator.clipboard.writeText(window.location.href);
@@ -177,7 +357,7 @@ export default function WorkspacePage() {
             {/* Online Users */}
             <div className="flex items-center gap-2">
               <div className="flex -space-x-2">
-                {onlineUsers.slice(0, 3).map((user, index) => {
+                {onlineUsers.slice(0, 3).map((user) => {
                   const isCurrentUser = user.user_session === userSession;
                   const displayName = user.user_name || `User-${user.user_session.slice(0, 4)}`;
                   return (
@@ -186,7 +366,7 @@ export default function WorkspacePage() {
                       className={`w-8 h-8 rounded-full border-2 flex items-center justify-center text-xs font-semibold text-white ${
                         isCurrentUser ? 'border-white shadow-lg' : 'border-background'
                       }`}
-                      style={{ backgroundColor: `hsl(${index * 120}, 70%, 50%)` }}
+                      style={{ backgroundColor: getUserColor(user.user_session) }}
                       title={displayName}
                     >
                       {displayName.slice(0, 2).toUpperCase()}
@@ -241,9 +421,15 @@ export default function WorkspacePage() {
                     type="text"
                     value={userName}
                     onChange={(e) => setUserName(e.target.value)}
-                    onBlur={() => setIsEditingName(false)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') setIsEditingName(false);
+                    onBlur={async () => {
+                      setIsEditingName(false);
+                      await updateUserName();
+                    }}
+                    onKeyDown={async (e) => {
+                      if (e.key === 'Enter') {
+                        setIsEditingName(false);
+                        await updateUserName();
+                      }
                       if (e.key === 'Escape') {
                         setUserName(`User-${userSession.slice(0, 4)}`);
                         setIsEditingName(false);
