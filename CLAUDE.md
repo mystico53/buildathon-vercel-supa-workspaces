@@ -7,7 +7,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `npm run dev` - Start development server with Turbopack (runs on http://localhost:3001 or 3000)
 - `npm run build` - Build production application (required before deployment)
 - `npm run start` - Start production server
-- `npm run lint` - Run ESLint checks (must pass for deployment)
+- `npm run lint` - Run ESLint checks (relaxed for hackathon development)
+
+## Hackathon Mode Configuration
+
+This project has been optimized for rapid hackathon development:
+
+- **ESLint**: Configured with permissive rules, TypeScript-specific linting disabled
+- **TypeScript**: Strict mode disabled, allows `any` types and loose type checking
+- **Workflow**: Prioritizes speed and demo functionality over code quality
+- **Restoration**: Original strict config backed up as `eslint.config.strict.mjs`
+
+For Claude Code: This setup minimizes linting friction during rapid development iterations.
 
 ## Project Architecture
 
